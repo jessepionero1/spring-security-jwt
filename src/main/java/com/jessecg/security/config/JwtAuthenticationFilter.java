@@ -6,6 +6,12 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.WebAuthenticationDetails;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -17,6 +23,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
 
     private final JwtService jwtService;
+    private final UserDetailsService userDetailsService;
+
 
 
     /**
@@ -31,23 +39,46 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      */
     @Override
     protected void doFilterInternal(
+            @NonNull HttpServletRequest request,
+            @NonNull HttpServletResponse response,
+            @NonNull FilterChain filterChain
+    ) throws ServletException, IOException {
 
-            //"A anotação @NonNull da biblioteca org.springframework.lang é uma anotação de validação que é usada para indicar que um parâmetro ou um valor de retorno não pode ser null."
-          @NonNull HttpServletRequest request,
-          @NonNull  HttpServletResponse response,
-          @NonNull  FilterChain filterChain)
-            throws ServletException, IOException {
-            final String authHeader = request.getHeader("Authorizacion");
-            final String jwt;
-            final String userEmail;
-            if(authHeader == null || !authHeader.startsWith("Bearer ")){
-                filterChain.doFilter(request, response);
-                return;
+        // Obtém o cabeçalho "Authorization" da solicitação
+        final String authHeader = request.getHeader("Authorization");
+
+        // Verifica se o cabeçalho começa com "Bearer " (indicando que um JWT segue)
+        final String jwt;
+        final String userEmail;
+        if (authHeader == null || !authHeader.startsWith("Bearer ")) {
+            // Se o cabeçalho não existir ou não começar com "Bearer ", prossegue com o próximo filtro
+            filterChain.doFilter(request, response);
+            return;
+        }
+
+        // Extrai o JWT do cabeçalho
+        jwt = authHeader.substring(7);
+        // Extrai o email do usuário do JWT
+        userEmail = jwtService.extractUsername(jwt);
+
+        // Se o email do usuário for encontrado e não houver autenticação atual no Spring Security...
+        if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
+            // ...carrega os detalhes do usuário com base no email...
+            UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
+            // ...e verifica se o JWT é válido para os detalhes do usuário
+            if (jwtService.isTokenValid(jwt, userDetails)) {
+                // Se o JWT for válido, cria um novo objeto de autenticação do Spring Security com os detalhes do usuário...
+                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
+                        userDetails,
+                        null,
+                        userDetails.getAuthorities()
+                );
+                authToken.setDetails(
+                        new WebAuthenticationDetailsSource().buildDetails(request)
+                );
+                SecurityContextHolder.getContext().setAuthentication(authToken);
             }
-            jwt = authHeader.substring(7);
-            userEmail = jwtService.extractUsername(jwt); // todo extract the userEmail from JWT token;
-
-
+        }
+        filterChain.doFilter(request, response);
     }
-
 }
